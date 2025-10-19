@@ -31,7 +31,7 @@ defmodule KruskalWallis.MixProject do
   defp docs() do
     [
       main: "KruskalWallis",
-      extras: ["README.md", "LICENSE", "examples.livemd", "CHANGELOG"]
+      extras: ["README.md", "LICENSE", "CHANGELOG"]
     ]
   end
 
@@ -43,6 +43,7 @@ defmodule KruskalWallis.MixProject do
 
   defp deps do
     [
+      {:ex_doc, ">= 0.0.0", only: :dev, runtime: false}
     ]
   end
 end
