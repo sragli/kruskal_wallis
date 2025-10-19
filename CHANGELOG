@@ -1,3 +1,15 @@
 ## [0.1.0] - 2025-10-19
 ### Added
 - Initial release
+
+## [0.1.1] - 2025-10-19
+### Changed
+- Added input validation to `KruskalWallis.test/2` to require a map of non-empty lists of numeric values and raise `ArgumentError` for invalid inputs.
+- Improved deterministic handling of group ordering when flattening input maps so rank assignment is stable regardless of map insertion order.
+
+### Fixed
+- Guarded tie-correction and pooled-variance calculations to avoid division-by-zero or NaN in degenerate cases (e.g., all-tied data or very small sample sizes). In those cases the implementation returns conservative results (H ≈ 0, p = 1) instead of crashing.
+
+### Added tests
+- Extensive unit tests covering deterministic ranking, tie-average ranks, post-hoc result shapes, empty-group and non-numeric input validation, very-small-sample behavior, and all-ties behavior.
+

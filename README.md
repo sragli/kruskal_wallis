@@ -12,7 +12,7 @@ Kruskal-Wallis test with post-hoc tests for multiple comparisons.
 ```elixir
 def deps do
   [
-    {:kruskal_wallis, "~> 0.1.0"}
+    {:kruskal_wallis, "~> 0.1.1"}
   ]
 end
 ```

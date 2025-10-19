@@ -12,8 +12,36 @@ defmodule KruskalWallis do
   ## Returns
     Map with :h_statistic, :p_value, :df, and :significant keys
   """
-  def test(groups, alpha \\ 0.05) do
-    all_values = groups |> Map.values() |> List.flatten()
+  def test(groups, alpha \\ 0.05)
+
+  def test(groups, _alpha) when not is_map(groups) do
+    # Basic input validation: groups must be a map of non-empty lists of numbers
+    raise ArgumentError, "groups must be a map of group_name => list_of_numbers"
+  end
+
+  def test(groups, alpha) do
+    # Flatten groups in a deterministic order (sorted keys) so ranks map to group values reliably
+    group_keys = Map.keys(groups) |> Enum.sort()
+
+    # Validate group shapes: each key must map to a non-empty list of numbers
+    Enum.each(group_keys, fn k ->
+      vals = Map.get(groups, k)
+
+      unless is_list(vals) do
+        raise ArgumentError, "group #{inspect(k)} must be a list"
+      end
+
+      if length(vals) == 0 do
+        raise ArgumentError, "group #{inspect(k)} must not be empty"
+      end
+    end)
+
+    all_values = Enum.flat_map(group_keys, &Map.get(groups, &1))
+
+    unless Enum.all?(all_values, &is_number/1) do
+      raise ArgumentError, "all group values must be numeric"
+    end
+
     n = length(all_values)
 
     ranks = rank_values(all_values)
@@ -35,11 +63,20 @@ defmodule KruskalWallis do
     tie_sum = calculate_tie_sum(all_ranks)
 
     # Apply tie correction to H if there are ties
-    h_corrected = if tie_sum > 0 do
-      h / (1 - tie_sum / (:math.pow(n, 3) - n))
-    else
-      h
-    end
+    h_corrected =
+      if tie_sum > 0 do
+        denom = :math.pow(n, 3) - n
+        correction = 1 - tie_sum / denom
+
+        # Guard against degenerate cases where correction <= 0 (e.g., all values tied)
+        if correction <= 0.0 do
+          0.0
+        else
+          h / correction
+        end
+      else
+        h
+      end
 
     # Degrees of freedom
     df = map_size(groups) - 1
@@ -71,28 +108,44 @@ defmodule KruskalWallis do
     List of pairwise comparison results with adjusted p-values
   """
   def conover_test(kw_result, groups, alpha \\ 0.05) do
-    all_values = groups |> Map.values() |> List.flatten()
+    # Flatten groups in the same deterministic (sorted key) order used by `test/2`
+    all_values =
+      Map.keys(groups)
+      |> Enum.sort()
+      |> Enum.flat_map(&Map.get(groups, &1))
+
     n = length(all_values)
     k = map_size(groups)
 
     group_names = Map.keys(groups) |> Enum.sort()
     group_ranks = kw_result.group_ranks
-    all_ranks = kw_result[:all_ranks] || (Map.values(group_ranks) |> List.flatten())
+    all_ranks = kw_result[:all_ranks] || Map.values(group_ranks) |> List.flatten()
 
     # Calculate pooled variance estimate S²
     # S² = [1/(N-k)] * [Σ(R_i²) - N((N+1)²/4)]
     sum_squared_ranks = Enum.reduce(all_ranks, 0, fn r, acc -> acc + r * r end)
-    s_squared = (sum_squared_ranks - n * :math.pow(n + 1, 2) / 4.0) / (n - k)
+
+    s_squared =
+      if n - k > 0 do
+        (sum_squared_ranks - n * :math.pow(n + 1, 2) / 4.0) / (n - k)
+      else
+        # Degenerate case: no degrees of freedom for pooled variance; use 0 to avoid NaN/Inf
+        0.0
+      end
 
     # Calculate tie correction factor
     tie_sum = calculate_tie_sum(all_ranks)
 
     # Apply tie correction to variance if there are ties
-    s_squared_corrected = if tie_sum > 0 do
-      s_squared * (n - 1 - kw_result.h_statistic) / (n - k)
-    else
-      s_squared
-    end
+    s_squared_corrected =
+      if tie_sum > 0 and n - k > 0 do
+        s_squared * (n - 1 - kw_result.h_statistic) / (n - k)
+      else
+        s_squared
+      end
+
+    # Degrees of freedom for t-distribution
+    df = n - k
 
     # Generate all pairwise comparisons
     comparisons =
@@ -113,13 +166,16 @@ defmodule KruskalWallis do
         # Conover test statistic
         # t = (R̄_i - R̄_j) / sqrt(S² * (1/n_i + 1/n_j))
         se = :math.sqrt(s_squared_corrected * (1.0 / n1 + 1.0 / n2))
-        t_stat = (r1_mean - r2_mean) / se
 
-        # Degrees of freedom for t-distribution
-        df = n - k
-
-        # Two-tailed p-value from t-distribution
-        p_value = 2 * (1 - t_cdf(abs(t_stat), df))
+        # Guard against zero or near-zero standard error (degenerate cases)
+        {t_stat, p_value} =
+          if se <= 0.0 or se != se do
+            {0.0, 1.0}
+          else
+            t_stat = (r1_mean - r2_mean) / se
+            p = 2 * (1 - t_cdf(abs(t_stat), df))
+            {t_stat, p}
+          end
 
         %{
           group1: g1,
@@ -146,12 +202,13 @@ defmodule KruskalWallis do
     List of pairwise comparison results with adjusted p-values
   """
   def dunn_test(kw_result, groups, alpha \\ 0.05) do
-    all_values = groups |> Map.values() |> List.flatten()
+    # Flatten groups in the same deterministic (sorted key) order used by `test/2`
+    group_names = Map.keys(groups) |> Enum.sort()
+    all_values = Enum.flat_map(group_names, &Map.get(groups, &1))
     n = length(all_values)
 
-    group_names = Map.keys(groups) |> Enum.sort()
     group_ranks = kw_result.group_ranks
-    all_ranks = kw_result[:all_ranks] || (Map.values(group_ranks) |> List.flatten())
+    all_ranks = kw_result[:all_ranks] || Map.values(group_ranks) |> List.flatten()
 
     # Calculate tie correction factor for Dunn's test
     tie_sum = calculate_tie_sum(all_ranks)
@@ -178,11 +235,12 @@ defmodule KruskalWallis do
         variance_base = n * (n + 1) / 12.0
 
         # Apply tie correction if there are ties
-        tie_correction = if tie_sum > 0 do
-          tie_sum / (12.0 * (n - 1))
-        else
-          0
-        end
+        tie_correction =
+          if tie_sum > 0 do
+            tie_sum / (12.0 * (n - 1))
+          else
+            0
+          end
 
         se = :math.sqrt((variance_base - tie_correction) * (1.0 / n1 + 1.0 / n2))
 
@@ -238,9 +296,13 @@ defmodule KruskalWallis do
   end
 
   defp assign_ranks_to_groups(groups, rank_map) do
-    # Flatten groups in order to match rank_map indices
+    # Use a deterministic order for group keys (sorted) to match how we flatten values
+    group_keys = Map.keys(groups) |> Enum.sort()
+
     {group_ranks, _} =
-      Enum.reduce(groups, {%{}, 0}, fn {group_name, values}, {acc, offset} ->
+      Enum.reduce(group_keys, {%{}, 0}, fn group_name, {acc, offset} ->
+        values = Map.get(groups, group_name)
+
         ranks =
           Enum.map(0..(length(values) - 1), fn i ->
             Map.get(rank_map, offset + i)
@@ -447,10 +509,11 @@ defmodule KruskalWallis do
 
   defp incomplete_beta(x, a, b) do
     # Use continued fraction representation
-    bt = :math.exp(
-      log_gamma(a + b) - log_gamma(a) - log_gamma(b) +
-      a * :math.log(x) + b * :math.log(1.0 - x)
-    )
+    bt =
+      :math.exp(
+        log_gamma(a + b) - log_gamma(a) - log_gamma(b) +
+          a * :math.log(x) + b * :math.log(1.0 - x)
+      )
 
     # Use symmetry if x > (a+1)/(a+b+2)
     if x < (a + 1.0) / (a + b + 2.0) do
