@@ -1,10 +1,11 @@
 # KruskalWallis
 
-Kruskal-Wallis test with Dunn's post-hoc test and Holm correction for multiple comparisons.
+Kruskal-Wallis test with post-hoc tests for multiple comparisons.
 
 * Kruskal-Wallis Test - A non-parametric test to determine if there are statistically significant differences between groups
-* Dunn's Post-Hoc Test - Pairwise comparisons to identify which specific groups differ
+* Dunn's Post-Hoc Test - Pairwise comparisons to identify which specific groups differ. Uses z-statistic (normal distribution) - more conservative, fewer assumptions
 * Holm Correction - Adjusts p-values to control for multiple comparisons
+* Conover Test - Pairwise comparisons to identify which specific groups differ. Uses t-statistic (t-distribution) - more powerful when distributions have similar shapes, similar to Tukey's HSD for ANOVA. It is generally preferred when you have similar distribution shapes across groups, while Dunn's test is more robust when distributions differ in shape
 
 ## Installation
 
@@ -25,7 +26,11 @@ groups = %{
   "C" => [2.1, 2.8, 2.4, 2.6, 2.3]
 }
 
-groups
-|> KruskalWallis.test()
-|> KruskalWallis.dunn_test(groups)
+kw_result = KruskalWallis.test(groups)
+
+# Use Dunn test (more conservative)
+dunn_results = KruskalWallis.dunn_test(kw_result, groups)
+
+# Or use Conover test (more powerful, same interface!)
+conover_results = KruskalWallis.conover_test(kw_result, groups)
 ```

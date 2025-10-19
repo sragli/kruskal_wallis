@@ -17,7 +17,7 @@ defmodule KruskalWallis.MixProject do
   end
 
   defp description() do
-    "Kruskal-Wallis test with Dunn's post-hoc test and Holm correction for multiple comparisons."
+    "Kruskal-Wallis test with post-hoc tests for multiple comparisons."
   end
 
   defp package() do

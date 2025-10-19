@@ -17,6 +17,7 @@ defmodule KruskalWallis do
     n = length(all_values)
 
     ranks = rank_values(all_values)
+
     group_ranks = assign_ranks_to_groups(groups, ranks)
 
     # Calculate H statistic
@@ -29,23 +30,38 @@ defmodule KruskalWallis do
 
     h = 12 / (n * (n + 1)) * sum_term - 3 * (n + 1)
 
+    # Tie correction for H statistic
+    all_ranks = Map.values(group_ranks) |> List.flatten()
+    tie_sum = calculate_tie_sum(all_ranks)
+
+    # Apply tie correction to H if there are ties
+    h_corrected = if tie_sum > 0 do
+      h / (1 - tie_sum / (:math.pow(n, 3) - n))
+    else
+      h
+    end
+
     # Degrees of freedom
     df = map_size(groups) - 1
 
     # Chi-square approximation for p-value
-    p_value = 1 - chi_square_cdf(h, df)
+    p_value = 1 - chi_square_cdf(h_corrected, df)
 
     %{
-      h_statistic: h,
+      h_statistic: h_corrected,
       p_value: p_value,
       df: df,
       significant: p_value < alpha,
-      group_ranks: group_ranks
+      group_ranks: group_ranks,
+      all_ranks: all_ranks
     }
   end
 
   @doc """
-  Performs Dunn's post-hoc test with Holm correction.
+  Performs Conover-Iman post-hoc test with Holm correction.
+
+  Conover test is generally more powerful than Dunn test but assumes
+  the distributions have similar shapes (like Tukey's HSD for ANOVA).
 
   ## Parameters
     - kw_result: Result from kruskal_wallis/1
@@ -54,12 +70,29 @@ defmodule KruskalWallis do
   ## Returns
     List of pairwise comparison results with adjusted p-values
   """
-  def dunn_test(kw_result, groups, alpha \\ 0.05) do
+  def conover_test(kw_result, groups, alpha \\ 0.05) do
     all_values = groups |> Map.values() |> List.flatten()
     n = length(all_values)
+    k = map_size(groups)
 
-    group_names = Map.keys(groups)
+    group_names = Map.keys(groups) |> Enum.sort()
     group_ranks = kw_result.group_ranks
+    all_ranks = kw_result[:all_ranks] || (Map.values(group_ranks) |> List.flatten())
+
+    # Calculate pooled variance estimate S²
+    # S² = [1/(N-k)] * [Σ(R_i²) - N((N+1)²/4)]
+    sum_squared_ranks = Enum.reduce(all_ranks, 0, fn r, acc -> acc + r * r end)
+    s_squared = (sum_squared_ranks - n * :math.pow(n + 1, 2) / 4.0) / (n - k)
+
+    # Calculate tie correction factor
+    tie_sum = calculate_tie_sum(all_ranks)
+
+    # Apply tie correction to variance if there are ties
+    s_squared_corrected = if tie_sum > 0 do
+      s_squared * (n - 1 - kw_result.h_statistic) / (n - k)
+    else
+      s_squared
+    end
 
     # Generate all pairwise comparisons
     comparisons =
@@ -77,17 +110,83 @@ defmodule KruskalWallis do
         r1_mean = Enum.sum(ranks1) / n1
         r2_mean = Enum.sum(ranks2) / n2
 
-        # Dunn's test statistic with tie correction
-        # Calculate sum of tied ranks cubed
-        all_ranks = Map.values(group_ranks) |> List.flatten()
-        tie_correction = calculate_tie_correction(all_ranks)
+        # Conover test statistic
+        # t = (R̄_i - R̄_j) / sqrt(S² * (1/n_i + 1/n_j))
+        se = :math.sqrt(s_squared_corrected * (1.0 / n1 + 1.0 / n2))
+        t_stat = (r1_mean - r2_mean) / se
 
-        # Standard error for Dunn's test
-        se =
-          :math.sqrt(
-            (n * (n + 1) / 12.0 - tie_correction / (12.0 * (n - 1))) * (1.0 / n1 + 1.0 / n2)
-          )
+        # Degrees of freedom for t-distribution
+        df = n - k
 
+        # Two-tailed p-value from t-distribution
+        p_value = 2 * (1 - t_cdf(abs(t_stat), df))
+
+        %{
+          group1: g1,
+          group2: g2,
+          t_statistic: t_stat,
+          p_value: p_value,
+          mean_rank1: r1_mean,
+          mean_rank2: r2_mean,
+          df: df
+        }
+      end
+
+    holm_correction(comparisons, alpha)
+  end
+
+  @doc """
+  Performs Dunn's post-hoc test with Holm correction.
+
+  ## Parameters
+    - kw_result: Result from kruskal_wallis/1
+    - groups: Original groups map
+
+  ## Returns
+    List of pairwise comparison results with adjusted p-values
+  """
+  def dunn_test(kw_result, groups, alpha \\ 0.05) do
+    all_values = groups |> Map.values() |> List.flatten()
+    n = length(all_values)
+
+    group_names = Map.keys(groups) |> Enum.sort()
+    group_ranks = kw_result.group_ranks
+    all_ranks = kw_result[:all_ranks] || (Map.values(group_ranks) |> List.flatten())
+
+    # Calculate tie correction factor for Dunn's test
+    tie_sum = calculate_tie_sum(all_ranks)
+
+    # Generate all pairwise comparisons
+    comparisons =
+      for i <- 0..(length(group_names) - 2),
+          j <- (i + 1)..(length(group_names) - 1) do
+        g1 = Enum.at(group_names, i)
+        g2 = Enum.at(group_names, j)
+
+        ranks1 = Map.get(group_ranks, g1)
+        ranks2 = Map.get(group_ranks, g2)
+
+        n1 = length(ranks1)
+        n2 = length(ranks2)
+
+        r1_mean = Enum.sum(ranks1) / n1
+        r2_mean = Enum.sum(ranks2) / n2
+
+        # Dunn's test standard error with proper tie correction
+        # SE = sqrt((N(N+1)/12 - T/(12(N-1))) * (1/n1 + 1/n2))
+        # where T = Σ(t³ - t) for tied groups
+        variance_base = n * (n + 1) / 12.0
+
+        # Apply tie correction if there are ties
+        tie_correction = if tie_sum > 0 do
+          tie_sum / (12.0 * (n - 1))
+        else
+          0
+        end
+
+        se = :math.sqrt((variance_base - tie_correction) * (1.0 / n1 + 1.0 / n2))
+
+        # Z-statistic
         z = (r1_mean - r2_mean) / se
 
         # Two-tailed p-value from standard normal
@@ -153,8 +252,8 @@ defmodule KruskalWallis do
     group_ranks
   end
 
-  # Calculate tie correction factor
-  defp calculate_tie_correction(ranks) do
+  # Calculate tie sum: Σ(t³ - t) for all tied groups
+  defp calculate_tie_sum(ranks) do
     # Group ranks by value to find ties
     rank_groups = Enum.group_by(ranks, & &1)
 
@@ -169,18 +268,27 @@ defmodule KruskalWallis do
     end)
   end
 
-  # Holm correction for multiple comparisons
+  # Holm correction for multiple comparisons with monotonicity enforcement
   defp holm_correction(comparisons, alpha) do
     sorted = Enum.sort_by(comparisons, & &1.p_value)
     m = length(comparisons)
 
-    Enum.with_index(sorted, 1)
-    |> Enum.map(fn {comp, i} ->
-      adjusted_p = min(comp.p_value * (m - i + 1), 1.0)
+    # Calculate adjusted p-values with monotonicity
+    {adjusted_comps, _} =
+      Enum.reduce(Enum.with_index(sorted, 1), {[], 0.0}, fn {comp, i}, {acc, max_p} ->
+        raw_adjusted = comp.p_value * (m - i + 1)
+        # Ensure monotonicity: adjusted p-value should not be less than previous
+        adjusted_p = min(:erlang.max(raw_adjusted, max_p), 1.0)
 
-      Map.put(comp, :adjusted_p_value, adjusted_p)
-      |> Map.put(:significant, adjusted_p < alpha)
-    end)
+        updated_comp =
+          comp
+          |> Map.put(:adjusted_p_value, adjusted_p)
+          |> Map.put(:significant, adjusted_p < alpha)
+
+        {[updated_comp | acc], adjusted_p}
+      end)
+
+    Enum.reverse(adjusted_comps)
   end
 
   # Chi-square CDF using regularized incomplete gamma function
@@ -313,5 +421,89 @@ defmodule KruskalWallis do
     y = 1.0 - ((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t * :math.exp(-x * x)
 
     sign * y
+  end
+
+  # Student's t-distribution CDF
+  defp t_cdf(t, df) when t < 0 do
+    1.0 - t_cdf(-t, df)
+  end
+
+  defp t_cdf(t, df) do
+    # Use the relationship with beta distribution
+    # P(T <= t) = 1 - 0.5 * I_x(df/2, 1/2)
+    # where x = df/(df + t²) and I is the regularized incomplete beta function
+    x = df / (df + t * t)
+
+    if t >= 0 do
+      1.0 - 0.5 * incomplete_beta(x, df / 2.0, 0.5)
+    else
+      0.5 * incomplete_beta(x, df / 2.0, 0.5)
+    end
+  end
+
+  # Regularized incomplete beta function I_x(a,b)
+  defp incomplete_beta(x, _a, _b) when x <= 0, do: 0.0
+  defp incomplete_beta(x, _a, _b) when x >= 1, do: 1.0
+
+  defp incomplete_beta(x, a, b) do
+    # Use continued fraction representation
+    bt = :math.exp(
+      log_gamma(a + b) - log_gamma(a) - log_gamma(b) +
+      a * :math.log(x) + b * :math.log(1.0 - x)
+    )
+
+    # Use symmetry if x > (a+1)/(a+b+2)
+    if x < (a + 1.0) / (a + b + 2.0) do
+      bt * beta_continued_fraction(x, a, b) / a
+    else
+      1.0 - bt * beta_continued_fraction(1.0 - x, b, a) / b
+    end
+  end
+
+  # Continued fraction for incomplete beta function
+  defp beta_continued_fraction(x, a, b, max_iter \\ 200) do
+    qab = a + b
+    qap = a + 1.0
+    qam = a - 1.0
+
+    # First iteration
+    c = 1.0
+    d = 1.0 - qab * x / qap
+    d = if abs(d) < 1.0e-30, do: 1.0e-30, else: d
+    d = 1.0 / d
+    result = d
+
+    {final_result, _} =
+      Enum.reduce_while(1..max_iter, {result, {c, d}}, fn m, {h, {c, d}} ->
+        m_float = m * 1.0
+        m2 = 2.0 * m_float
+
+        # Even iteration
+        aa = m_float * (b - m_float) * x / ((qam + m2) * (a + m2))
+        d = 1.0 + aa * d
+        d = if abs(d) < 1.0e-30, do: 1.0e-30, else: d
+        c = 1.0 + aa / c
+        c = if abs(c) < 1.0e-30, do: 1.0e-30, else: c
+        d = 1.0 / d
+        h = h * d * c
+
+        # Odd iteration
+        aa = -(a + m_float) * (qab + m_float) * x / ((a + m2) * (qap + m2))
+        d = 1.0 + aa * d
+        d = if abs(d) < 1.0e-30, do: 1.0e-30, else: d
+        c = 1.0 + aa / c
+        c = if abs(c) < 1.0e-30, do: 1.0e-30, else: c
+        d = 1.0 / d
+        delta = d * c
+        h = h * delta
+
+        if abs(delta - 1.0) < 1.0e-15 do
+          {:halt, {h, {c, d}}}
+        else
+          {:cont, {h, {c, d}}}
+        end
+      end)
+
+    final_result
   end
 end
