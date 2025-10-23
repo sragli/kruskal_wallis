@@ -26,8 +26,8 @@ defmodule KruskalWallisTest do
     groups = %{"A" => [1, 2], "B" => [3, 4], "C" => [5, 6]}
     kw = KruskalWallis.test(groups)
 
-    dunn = KruskalWallis.dunn_test(kw, groups)
-    conover = KruskalWallis.conover_test(kw, groups)
+    dunn = KruskalWallis.Dunn.test(kw, groups)
+    conover = KruskalWallis.Conover.test(kw, groups)
 
     # For 3 groups there should be 3 pairwise comparisons
     assert length(dunn) == 3
@@ -62,8 +62,8 @@ defmodule KruskalWallisTest do
     groups = %{"A" => [1], "B" => [2], "C" => [3]}
     kw = KruskalWallis.test(groups)
 
-    dunn = KruskalWallis.dunn_test(kw, groups)
-    conover = KruskalWallis.conover_test(kw, groups)
+    dunn = KruskalWallis.Dunn.test(kw, groups)
+    conover = KruskalWallis.Conover.test(kw, groups)
 
     assert length(dunn) == 3
     assert length(conover) == 3

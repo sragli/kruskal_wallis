@@ -12,7 +12,7 @@ Kruskal-Wallis test with post-hoc tests for multiple comparisons.
 ```elixir
 def deps do
   [
-    {:kruskal_wallis, "~> 0.1.1"}
+    {:kruskal_wallis, "~> 0.2.0"}
   ]
 end
 ```
@@ -29,8 +29,17 @@ groups = %{
 kw_result = KruskalWallis.test(groups)
 
 # Use Dunn test (more conservative)
-dunn_results = KruskalWallis.dunn_test(kw_result, groups)
+dunn_results = KruskalWallis.Dunn.test(kw_result, groups)
 
-# Or use Conover test (more powerful, same interface!)
-conover_results = KruskalWallis.conover_test(kw_result, groups)
+# Or use Conover test (more powerful)
+conover_results = KruskalWallis.Conover.test(kw_result, groups)
 ```
+
+## Citations
+
+References for the statistical methods implemented here; Kruskal-Wallis test, Dunn's post-hoc, Conover-Iman post-hoc, and Holm correction.
+
+- Kruskal, W. H., & Wallis, W. A. (1952). "Use of ranks in one-criterion variance analysis." Journal of the American Statistical Association, 47(260), 583–621.
+- Dunn, O. J. (1964). "Multiple comparisons using rank sums." Technometrics, 6(3), 241–252.
+- Conover, W. J., & Iman, R. L. (1979). "On multiple-comparisons procedures." Los Alamos Scientific Laboratory report LA-7677-MS.
+- Holm, S. (1979). "A simple sequentially rejective multiple test procedure." Scandinavian Journal of Statistics, 6(2), 65–70.

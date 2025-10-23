@@ -1,6 +1,7 @@
-## [0.1.0] - 2025-10-19
-### Added
-- Initial release
+## [0.2.0] - 2025-10-23
+### Changed
+- Refactored post-hoc tests into separate modules: `KruskalWallis.Dunn` and `KruskalWallis.Conover`.
+- NOTE: If you previously used `KruskalWallis.dunn_test/3` or `KruskalWallis.conover_test/3`, change calls to `KruskalWallis.Dunn.test/3` and `KruskalWallis.Conover.test/3` respectively.
 
 ## [0.1.1] - 2025-10-19
 ### Changed
@@ -13,3 +14,6 @@
 ### Added tests
 - Extensive unit tests covering deterministic ranking, tie-average ranks, post-hoc result shapes, empty-group and non-numeric input validation, very-small-sample behavior, and all-ties behavior.
 
+## [0.1.0] - 2025-10-19
+### Added
+- Initial release
